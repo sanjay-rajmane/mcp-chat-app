@@ -3,7 +3,6 @@ import { CallToolRequestSchema, ListToolsRequestSchema, InitializeRequestSchema 
 import { randomUUID } from "crypto";
 const SESSION_ID_HEADER_NAME = "mcp-session-id";
 const JSON_RPC = "2.0";
-
 export class MCPServer {
     server;
     // to support multiple simultaneous connections
@@ -11,12 +10,10 @@ export class MCPServer {
     toolInterval;
     singleGreetToolName = "single-greet";
     multiGreetToolName = "multi-great";
-
     constructor(server) {
         this.server = server;
         this.setupTools();
     }
-
     async handleGetRequest(req, res) {
         console.log("get request received");
         // if server does not offer an SSE stream at this endpoint.
@@ -32,7 +29,6 @@ export class MCPServer {
         await this.streamMessages(transport);
         return;
     }
-
     async handlePostRequest(req, res) {
         const sessionId = req.headers[SESSION_ID_HEADER_NAME];
         console.log("post request received");
@@ -56,7 +52,7 @@ export class MCPServer {
                     // sessionIdGenerator: () => undefined
                 });
                 await this.server.connect(transport);
-                await transport.handleRequest(req, res, req.body);                
+                await transport.handleRequest(req, res, req.body);
                 // session ID will only be available (if in not Stateless-Mode)
                 // after handling the first request
                 const sessionId = transport.sessionId;
@@ -65,7 +61,6 @@ export class MCPServer {
                 }
                 return;
             }
-
             res.status(400).json(this.createErrorResponse("Bad Request: invalid session ID or method 222."));
             return;
         }
@@ -75,12 +70,10 @@ export class MCPServer {
             return;
         }
     }
-
     async cleanup() {
         this.toolInterval?.close();
         await this.server.close();
     }
-
     setupTools() {
         // Define available tools
         const setToolSchema = () => this.server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -119,9 +112,7 @@ export class MCPServer {
                 tools: [singleGreetTool, multiGreetTool]
             };
         });
-
         setToolSchema();
-
         // set tools dynamically, changing 5 second
         this.toolInterval = setInterval(async () => {
             setToolSchema();
@@ -133,7 +124,6 @@ export class MCPServer {
                 this.sendNotification(transport, notification);
             });
         }, 5000);
-
         // handle tool calls
         this.server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
             console.log("tool request received: ", request);
@@ -181,7 +171,6 @@ export class MCPServer {
             throw new Error("Tool not found");
         });
     }
-
     // send message streaming message every second
     // cannot use server.sendLoggingMessage because we have can have multiple transports
     async streamMessages(transport) {
@@ -223,7 +212,6 @@ export class MCPServer {
             console.error("Error sending message:", error);
         }
     }
-
     async sendNotification(transport, notification) {
         const rpcNotificaiton = {
             ...notification,
@@ -231,7 +219,6 @@ export class MCPServer {
         };
         await transport.send(rpcNotificaiton);
     }
-
     createErrorResponse(message) {
         return {
             jsonrpc: '2.0',
@@ -242,7 +229,6 @@ export class MCPServer {
             id: randomUUID(),
         };
     }
-    
     isInitializeRequest(body) {
         const isInitial = (data) => {
             const result = InitializeRequestSchema.safeParse(data);
