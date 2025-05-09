@@ -5,7 +5,7 @@ import { LoggingMessageNotificationSchema, ToolListChangedNotificationSchema, Te
 import cors from "cors";
 import express from 'express';
 
-export const sseClients = new Set();
+export const sseClients = new Set<express.Response>();
 
 const app = express();
 app.use(express.json());
@@ -14,17 +14,17 @@ app.use(cors());
 app.use('/', router);
 
 class MCPClient {
-    tools = [];
+    tools: { name: string; description: string }[] = [];
     client;
-    transport = null;
+    transport: StreamableHTTPClientTransport | null = null;
     isCompleted = false;
     notifications = [];
 
-    constructor(serverName) {
+    constructor(serverName: string) {
         this.client = new Client({ name: `mcp-client-for-${serverName}`, version: "1.0.0" });
     }
 
-    async connectToServer(serverUrl) {
+    async connectToServer(serverUrl: string | { toString: () => string; }) {
         const url = new URL(serverUrl);
         try {
             this.transport = new StreamableHTTPClientTransport(url);
@@ -55,7 +55,7 @@ class MCPClient {
         }
     }
 
-    async callTool(name, args = { name: "myName" }) {
+    async callTool(name: string, args = { name: "myName" }) {
         try {
         this.notifications = []; // clear old messages
 
@@ -64,9 +64,9 @@ class MCPClient {
             arguments: args,
         });
 
-        let messages = [...this.notifications];
+        let messages: string[] = [...this.notifications];
 
-        result.content.forEach((item) => {
+        (result.content as unknown[]).forEach((item) => {
             const parse = TextContentSchema.safeParse(item);
             if (parse.success) {
             messages.push(parse.data.text);
@@ -145,21 +145,18 @@ router.post('/send-message', async (req, res) => {
     const { message } = req.body;
   
     try {
-      if (!mcpClient.isConnected) {
         await mcpClient.connectToServer("http://localhost:3000/mcp");
-        mcpClient.isConnected = true;
-      }
-  
-      const reply = await mcpClient.callTool('multi-great', { name: message });
-      res.json({ reply });
+     
+        const reply = await mcpClient.callTool('multi-great', { name: message });
+        res.json({ reply });
     } catch (e) {
-      console.error("MCP error", e);
-      res.status(500).json({ error: "Failed to get response from MCP" });
+        console.error("MCP error", e);
+        res.status(500).json({ error: "Failed to get response from MCP" });
     }
 });
 
-router.get('/stream', (req, res) => {
-  res.set({
+router.get('/stream', async (req, res) => {
+    res.set({
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
     Connection: 'keep-alive',
