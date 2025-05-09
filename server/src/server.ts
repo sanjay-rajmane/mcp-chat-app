@@ -1,106 +1,90 @@
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { Notification, CallToolRequestSchema, ListToolsRequestSchema, LoggingMessageNotification, ToolListChangedNotification, JSONRPCNotification, JSONRPCError, InitializeRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, ListToolsRequestSchema, InitializeRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { randomUUID } from "crypto";
-import { Request, Response } from "express"
-
-const SESSION_ID_HEADER_NAME = "mcp-session-id"
-const JSON_RPC = "2.0"
+const SESSION_ID_HEADER_NAME = "mcp-session-id";
+const JSON_RPC = "2.0";
 
 export class MCPServer {
-    server: Server
-
+    server;
     // to support multiple simultaneous connections
-    transports: {[sessionId: string]: StreamableHTTPServerTransport} = {}
+    transports: { [key: string]: StreamableHTTPServerTransport } = {};
+    toolInterval: any;
+    singleGreetToolName = "single-greet";
+    multiGreetToolName = "multi-great";
 
-    private toolInterval: NodeJS.Timeout | undefined
-    private singleGreetToolName = "single-greet"
-    private multiGreetToolName = "multi-great"
-
-
-    constructor(server: Server) {
-        this.server = server
-        this.setupTools()
+    constructor(server: any) {
+        this.server = server;
+        this.setupTools();
     }
 
-    async handleGetRequest(req: Request, res: Response) {
-        console.log("get request received")
+    async handleGetRequest(req:any, res: any) {
+        console.log("get request received");
         // if server does not offer an SSE stream at this endpoint.
         // res.status(405).set('Allow', 'POST').send('Method Not Allowed')
-
-        const sessionId = req.headers['mcp-session-id'] as string | undefined
+        const sessionId = req.headers['mcp-session-id'];
         if (!sessionId || !this.transports[sessionId]) {
-            res.status(400).json(this.createErrorResponse("Bad Request: invalid session ID or method."))
-            return
+            res.status(400).json(this.createErrorResponse("Bad Request: invalid session ID or method."));
+            return;
         }
-
-        console.log(`Establishing SSE stream for session ${sessionId}`)
-        const transport = this.transports[sessionId]
-        await transport.handleRequest(req, res)
-        await this.streamMessages(transport)
-
-        return
+        console.log(`Establishing SSE stream for session ${sessionId}`);
+        const transport = this.transports[sessionId];
+        await transport.handleRequest(req, res);
+        await this.streamMessages(transport);
+        return;
     }
 
-    async handlePostRequest(req: Request, res: Response) {
-        const sessionId = req.headers[SESSION_ID_HEADER_NAME] as string | undefined
-
-        console.log("post request received")
-        console.log("body: ", req.body)
-
-        let transport: StreamableHTTPServerTransport
-
+    async handlePostRequest(req: any, res: any) {
+        const sessionId = req.headers[SESSION_ID_HEADER_NAME];
+        console.log("post request received");
+        console.log("body: ", req.body);
+        let transport;
+        console.log("sessionId: ", sessionId);
         try {
             // reuse existing transport
             if (sessionId && this.transports[sessionId]) {
-                transport = this.transports[sessionId]
-                await transport.handleRequest(req, res, req.body)
-                return
+                console.log("reusing existing transport");
+                transport = this.transports[sessionId];
+                await transport.handleRequest(req, res, req.body);
+                return;
             }
-
             // create new transport
             if (!sessionId && this.isInitializeRequest(req.body)) {
+                console.log("creating new transport");
                 const transport = new StreamableHTTPServerTransport({
                     sessionIdGenerator: () => randomUUID(),
                     // for stateless mode:
                     // sessionIdGenerator: () => undefined
-                })
-
-                await this.server.connect(transport)
-                await transport.handleRequest(req, res, req.body)
-
+                });
+                await this.server.connect(transport);
+                await transport.handleRequest(req, res, req.body);                
                 // session ID will only be available (if in not Stateless-Mode)
                 // after handling the first request
-                const sessionId = transport.sessionId
+                const sessionId = transport.sessionId;
                 if (sessionId) {
-                    this.transports[sessionId] = transport
+                    this.transports[sessionId] = transport;
                 }
-
-                return
+                return;
             }
 
-            res.status(400).json(this.createErrorResponse("Bad Request: invalid session ID or method."))
-            return
-
-        } catch (error) {
-
-            console.error('Error handling MCP request:', error)
-            res.status(500).json(this.createErrorResponse("Internal server error."))
-            return
+            res.status(400).json(this.createErrorResponse("Bad Request: invalid session ID or method 222."));
+            return;
+        }
+        catch (error) {
+            console.error('Error handling MCP request:', error);
+            res.status(500).json(this.createErrorResponse("Internal server error."));
+            return;
         }
     }
 
     async cleanup() {
-        this.toolInterval?.close()
-        await this.server.close()
+        this.toolInterval?.close();
+        await this.server.close();
     }
 
-    private setupTools() {
-
+    setupTools() {
         // Define available tools
         const setToolSchema = () => this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-            this.singleGreetToolName = `single-greeting-${randomUUID()}`
-
+            this.singleGreetToolName = `single-greeting-${randomUUID()}`;
             // tool that returns a single greeting
             const singleGreetTool = {
                 name: this.singleGreetToolName,
@@ -109,14 +93,13 @@ export class MCPServer {
                     type: "object",
                     properties: {
                         name: {
-                            type: "string" ,
+                            type: "string",
                             description: "name to greet"
                         },
                     },
                     required: ["name"]
                 }
-            }
-
+            };
             // tool that sends multiple greetings with notifications
             const multiGreetTool = {
                 name: this.multiGreetToolName,
@@ -125,185 +108,149 @@ export class MCPServer {
                     type: "object",
                     properties: {
                         name: {
-                            type: "string" ,
+                            type: "string",
                             description: "name to greet"
                         },
                     },
                     required: ["name"]
                 }
-            }
-
+            };
             return {
                 tools: [singleGreetTool, multiGreetTool]
-            }
-        })
+            };
+        });
 
-        setToolSchema()
+        setToolSchema();
 
         // set tools dynamically, changing 5 second
         this.toolInterval = setInterval(async () => {
-            setToolSchema()
+            setToolSchema();
             // to notify client that the tool changed
             Object.values(this.transports).forEach((transport) => {
-
-                const notification: ToolListChangedNotification = {
+                const notification = {
                     method: "notifications/tools/list_changed",
-                }
-                this.sendNotification(transport, notification)
-            })
-        }, 5000)
+                };
+                this.sendNotification(transport, notification);
+            });
+        }, 5000);
 
         // handle tool calls
-        this.server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
-            console.log("tool request received: ", request)
-            console.log("extra: ", extra)
-
-            const args = request.params.arguments
-            const toolName = request.params.name
-            const sendNotification = extra.sendNotification
-
+        this.server.setRequestHandler(CallToolRequestSchema, async (request: { params: { arguments: any; name: any; }; }, extra: { sendNotification: any; }) => {
+            console.log("tool request received: ", request);
+            console.log("extra: ", extra);
+            const args = request.params.arguments;
+            const toolName = request.params.name;
+            const sendNotification = extra.sendNotification;
             if (!args) {
-                throw new Error("arguments undefined")
+                throw new Error("arguments undefined");
             }
-
             if (!toolName) {
-                throw new Error("tool name undefined")
+                throw new Error("tool name undefined");
             }
-
             if (toolName === this.singleGreetToolName) {
-
-                const { name } = args
-
+                const { name } = args;
                 if (!name) {
-                    throw new Error("Name to greet undefined.")
+                    throw new Error("Name to greet undefined.");
                 }
-
                 return {
-                    content: [ {
-                        type: "text",
-                        text: `Hey ${name}! Welcome to my world!`
-                    }]
-                }
+                    content: [{
+                            type: "text",
+                            text: `Hey ${name}! Welcome to my world!`
+                        }]
+                };
             }
-
             if (toolName === this.multiGreetToolName) {
-                const { name } = args
-                const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
-
-                let notification: LoggingMessageNotification = {
+                const { name } = args;
+                const sleep = (ms: number | undefined) => new Promise(resolve => setTimeout(resolve, ms));
+                let notification = {
                     method: "notifications/message",
                     params: { level: "info", data: `First greet to ${name}` }
-                }
-
-                await sendNotification(notification)
-
-                await sleep(1000)
-
-                notification.params.data = `Second greet to ${name}`
+                };
                 await sendNotification(notification);
-
-                await sleep(1000)
-
+                await sleep(1000);
+                notification.params.data = `Second greet to ${name}`;
+                await sendNotification(notification);
+                await sleep(1000);
                 return {
-                    content: [ {
-                        type: "text",
-                        text: `Hope you enjoy your day!`
-                    }]
-                }
+                    content: [{
+                            type: "text",
+                            text: `Hope you enjoy your day!`
+                        }]
+                };
             }
-
-            throw new Error("Tool not found")
-        })
+            throw new Error("Tool not found");
+        });
     }
-
 
     // send message streaming message every second
     // cannot use server.sendLoggingMessage because we have can have multiple transports
-    private async streamMessages(transport: StreamableHTTPServerTransport) {
+    async streamMessages(transport: any) {
         try {
             // based on LoggingMessageNotificationSchema to trigger setNotificationHandler on client
-            const message: LoggingMessageNotification = {
+            const message = {
                 method: "notifications/message",
                 params: { level: "info", data: "SSE Connection established" }
-            }
-
-            this.sendNotification(transport, message)
-
-            let messageCount = 0
-
+            };
+            this.sendNotification(transport, message);
+            let messageCount = 0;
             const interval = setInterval(async () => {
-
-                messageCount++
-
-                const data = `Message ${messageCount} at ${new Date().toISOString()}`
-
-                const message: LoggingMessageNotification = {
+                messageCount++;
+                const data = `Message ${messageCount} at ${new Date().toISOString()}`;
+                const message = {
                     method: "notifications/message",
                     params: { level: "info", data: data }
-                }
-
-
+                };
                 try {
-
-                    this.sendNotification(transport, message)
-
-                    console.log(`Sent: ${data}`)
-
+                    this.sendNotification(transport, message);
+                    console.log(`Sent: ${data}`);
                     if (messageCount === 2) {
-                        clearInterval(interval)
-
-                        const message: LoggingMessageNotification = {
+                        clearInterval(interval);
+                        const message = {
                             method: "notifications/message",
                             params: { level: "info", data: "Streaming complete!" }
-                        }
-
-                        this.sendNotification(transport, message)
-
-                        console.log("Stream completed")
+                        };
+                        this.sendNotification(transport, message);
+                        console.log("Stream completed");
                     }
-
-                } catch (error) {
-                    console.error("Error sending message:", error)
-                    clearInterval(interval)
                 }
-
-            }, 1000)
-
-        } catch (error) {
-            console.error("Error sending message:", error)
+                catch (error) {
+                    console.error("Error sending message:", error);
+                    clearInterval(interval);
+                }
+            }, 1000);
+        }
+        catch (error) {
+            console.error("Error sending message:", error);
         }
     }
 
-
-    private async sendNotification(transport: StreamableHTTPServerTransport, notification: Notification) {
-        const rpcNotificaiton: JSONRPCNotification = {
+    async sendNotification(transport: any, notification: any) {
+        const rpcNotificaiton = {
             ...notification,
             jsonrpc: JSON_RPC,
-        }
-        await transport.send(rpcNotificaiton)
+        };
+        await transport.send(rpcNotificaiton);
     }
 
-
-    private createErrorResponse(message: string): JSONRPCError {
+    createErrorResponse(message: string) {
         return {
             jsonrpc: '2.0',
             error: {
-              code: -32000,
-              message: message,
+                code: -32000,
+                message: message,
             },
             id: randomUUID(),
-        }
+        };
     }
-
-    private isInitializeRequest(body: any): boolean {
+    
+    isInitializeRequest(body : any) {
         const isInitial = (data: any) => {
-            const result = InitializeRequestSchema.safeParse(data)
-            return result.success
-        }
+            const result = InitializeRequestSchema.safeParse(data);
+            return result.success;
+        };
         if (Array.isArray(body)) {
-          return body.some(request => isInitial(request))
+            return body.some(request => isInitial(request));
         }
-        return isInitial(body)
+        return isInitial(body);
     }
-
 }
